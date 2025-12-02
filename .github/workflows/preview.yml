@@ -6,7 +6,7 @@ on:
   push:
     branches:
       - 'feat/**'
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   preview:
@@ -15,6 +15,7 @@ jobs:
       contents: write
       pages: write
       id-token: write
+      pull-requests: write
 
     steps:
       - name: Checkout code
@@ -32,13 +33,22 @@ jobs:
       - name: Build
         run: npm run build --if-present
 
-      - name: Prepare gh-pages branch
+      - name: Determine preview path
+        id: preview
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PREVIEW_PATH="previews/pr-${{ github.event.pull_request.number }}"
+          else
+            PREVIEW_PATH="previews/${{ github.ref_name }}"
+          fi
+          PREVIEW_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${PREVIEW_PATH}/"
+          echo "path=${PREVIEW_PATH}" >> $GITHUB_OUTPUT
+          echo "url=${PREVIEW_URL}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to gh-pages
         env:
-          REPO: ${{ github.repository }}
           REPO_URL: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          PR_NUM: ${{ github.event.pull_request.number || '' }}
-          BRANCH_NAME: ${{ github.ref_name }}
-          PREVIEW_PATH: ${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
+          PREVIEW_PATH: ${{ steps.preview.outputs.path }}
         run: |
           set -euo pipefail
           TMP=gh-pages-tmp
@@ -58,25 +68,19 @@ jobs:
           fi
 
           # Clean target preview folder and copy build
-          TARGET_DIR="previews/${PREVIEW_PATH}"
-          rm -rf "$TARGET_DIR"
-          mkdir -p "$TARGET_DIR"
-          cp -r ../dist/* "$TARGET_DIR/"
+          rm -rf "$PREVIEW_PATH"
+          mkdir -p "$PREVIEW_PATH"
+          cp -r ../dist/* "$PREVIEW_PATH/"
 
           git add --all
           git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "chore(preview): update preview for ${PREVIEW_PATH}" || echo "No changes to commit"
           git push origin gh-pages
 
       - name: Comment preview URL on PR
-        if: ${{ github.event_name == 'pull_request' }}
+        if: github.event_name == 'pull_request'
         env:
-          PREVIEW_URL: https://
-          REPO_OWNER: ${{ github.repository_owner }}
-          REPO_NAME: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUM: ${{ github.event.pull_request.number }}
         run: |
-          PREVIEW_PATH="previews/pr-${PR_NUM}"
-          PREVIEW_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${PREVIEW_PATH}/"
-          echo "Posting preview URL: $PREVIEW_URL"
-          gh auth status || true
-          gh pr comment $PR_NUM --repo ${{ github.repository }} --body "Preview available: $PREVIEW_URL"
+          PREVIEW_URL="${{ steps.preview.outputs.url }}"
+          gh pr comment $PR_NUM --repo ${{ github.repository }} --body "🚀 Preview available: [$PREVIEW_URL]($PREVIEW_URL)"
