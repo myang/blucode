@@ -1,0 +1,90 @@
+name: Preview Deploy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - 'feat/**'
+  workflow_dispatch:
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Determine preview path
+        id: preview
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PREVIEW_PATH="previews/pr-${{ github.event.pull_request.number }}"
+          else
+            PREVIEW_PATH="previews/${{ github.ref_name }}"
+          fi
+          PREVIEW_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${PREVIEW_PATH}/"
+          echo "path=${PREVIEW_PATH}" >> $GITHUB_OUTPUT
+          echo "url=${PREVIEW_URL}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to gh-pages
+        env:
+          REPO_URL: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          PREVIEW_PATH: ${{ steps.preview.outputs.path }}
+        run: |
+          set -euo pipefail
+          TMP=gh-pages-tmp
+          rm -rf $TMP
+          mkdir -p $TMP
+          cd $TMP
+
+          # Configure git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Try to fetch gh-pages branch; create it if missing
+          if git ls-remote --exit-code --heads "$REPO_URL" gh-pages; then
+            git clone --depth 1 --branch gh-pages "$REPO_URL" .
+          else
+            git init .
+            git remote add origin "$REPO_URL"
+            git checkout --orphan gh-pages
+            git commit --allow-empty -m "chore: initialize gh-pages branch"
+            git push origin gh-pages
+          fi
+
+          # Clean target preview folder and copy build
+          rm -rf "$PREVIEW_PATH"
+          mkdir -p "$PREVIEW_PATH"
+          cp -r ../dist/* "$PREVIEW_PATH/"
+
+          git add --all
+          git commit -m "chore(preview): update preview for ${PREVIEW_PATH}" || echo "No changes to commit"
+          git push origin gh-pages
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          PREVIEW_URL="${{ steps.preview.outputs.url }}"
+          gh pr comment $PR_NUM --repo ${{ github.repository }} --body "🚀 Preview available: [$PREVIEW_URL]($PREVIEW_URL)"
