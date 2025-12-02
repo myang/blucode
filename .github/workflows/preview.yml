@@ -56,6 +56,10 @@ jobs:
           mkdir -p $TMP
           cd $TMP
 
+          # Configure git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
           # Try to fetch gh-pages branch; create it if missing
           if git ls-remote --exit-code --heads "$REPO_URL" gh-pages; then
             git clone --depth 1 --branch gh-pages "$REPO_URL" .
@@ -73,7 +77,7 @@ jobs:
           cp -r ../dist/* "$PREVIEW_PATH/"
 
           git add --all
-          git -c user.name="github-actions[bot]" -c user.email="github-actions[bot]@users.noreply.github.com" commit -m "chore(preview): update preview for ${PREVIEW_PATH}" || echo "No changes to commit"
+          git commit -m "chore(preview): update preview for ${PREVIEW_PATH}" || echo "No changes to commit"
           git push origin gh-pages
 
       - name: Comment preview URL on PR
